@@ -1,7 +1,4 @@
 rm(list=ls())
-
-#please let me commit this ! a simple change has been made
-
 setwd("/Users/haleyplaas/OneDrive - University of North Carolina at Chapel Hill/Coding/R/Chowan Data/multi-year")
 library(dplyr);library(tidyr);library(ggplot2);library(gam);library(gamm4);library(cowplot);library(mgcv);library(reshape2);library(MuMIn); library(stringr); library(ISLR); library(voxel); library(gridExtra); library(purrr)
 #Each chunk of years must be downloaded from the Water Quality Portal separately due to the size of the data set -- load them and combine
@@ -23,7 +20,11 @@ clean.0 <- dirty.df %>% select(Date = ActivityStartDate,
                                Parameter.Unit = ResultMeasure.MeasureUnitCode,
                                Qualifier.Code = ResultCommentText,
                                LOQ = DetectionQuantitationLimitMeasure.MeasureValue, 
-                               LOQ.Unit = DetectionQuantitationLimitMeasure.MeasureUnitCode) 
+                               LOQ.Unit = DetectionQuantitationLimitMeasure.MeasureUnitCode,
+                               Photic_Grab = SampleCollectionMethod.MethodName) 
+#Selecting Photic OR Grab Samples
+unique(clean.0$Photic_Grab)
+clean.0 <- clean.0 %>% filter(is.na(Photic_Grab) | Photic_Grab == "PHOTIC" | Photic_Grab == "Photic" | Photic_Grab == "LEGACY" | Photic_Grab == "Legacy") #keeping photic samples, and those labeled NA, which encompass measurements made with a Sonde including DO / pH / temperature / salinity
 #Labeling each site by its Station (separating identifier 21NCXXWQ)
 clean.1 <- tidyr::separate(clean.0, Identifier, c("Identifier", "Station"))
 #relabeling stations which were renamed over time
@@ -135,7 +136,6 @@ clean.12 <- clean.11 %>% select(Date, Identifier, Station, Depth, Parameter, Par
   select(Date, Identifier, Station, Depth, -row, Phosphorus,
          Ammonia, 
          pH,
-         Turbidity,
          CHLA = `Chlorophyll a`, 
          DO = `Dissolved oxygen (DO)`,
          Inorganic.N = `Inorganic nitrogen (nitrate and nitrite)`,
@@ -144,10 +144,12 @@ clean.12 <- clean.11 %>% select(Date, Identifier, Station, Depth, Parameter, Par
          Salinity, 
          Specific.Conductance = `Specific conductance`, 
          Temperature = `Temperature, water`)
-#Skip clean.13 because at first I tried to select specific depths, but this filtered out too much important data, so I categorized the depths into surface, sub-surface, deep (bottom?), and will make note of this as a limitation when treating all the parameter values as if they were collected and quantified at the same depth, although the measurements could vary greatly due to depth of reading.
+#Skip clean.13 because at first I tried to select specific depths, but this filtered out too much important data, so I categorized the depths into surface, sub-surface, deep (bottom?), and will make note of this as a limitation when treating all the parameter values as if they were collected and quantified at the same depth, although the measurements could vary greatly due to depth of reading. 
+# see on 2021-10-06, all samples labeled "grab" were removed from the model
 
 #Recoding all "not detected values" to halfway point between 0 and the LOD for later transformation if necessary to reduce # of zeroes in data
 # Links to methods for quantification of each nutrient analyte: 
+# see the article emailed to me by Ricky to evaluate better ways to treat non-detected and left-skewed data sets (particularly for Ammonia)
 # Ammonia https://www.nemi.gov/methods/method_summary/5405/ Nitrogen, Ammonia (Colorimetric, Automated Phenate)
 # Inorganic N https://www.nemi.gov/methods/method_summary/4702/ Nitrogen, Nitrate-Nitrite (Colorimetric, Automated, Cadmium Reduction)
 # Kjedahl N https://www.nemi.gov/methods/method_summary/9626/ TKN by  semi-automated colorimetry
@@ -167,7 +169,6 @@ clean.15 <- clean.14 %>% mutate(Date = as.Date(Date, "%Y-%m-%d"),
                                 Station = as.factor(Station),
                                 Ammonia = as.numeric(Ammonia),
                                 pH = as.numeric(pH),
-                                Turbidity = as.numeric(Turbidity),
                                 CHLA = as.numeric(CHLA),
                                 DO = as.numeric(DO),
                                 Phosphorus = as.numeric(Phosphorus),
@@ -184,7 +185,7 @@ attempt.1 <- clean.15 %>% group_by(Date, Station) %>% summarise_all(~first(na.om
 attempt.2 <- clean.15 %>% group_by(Date, Station) %>% summarise_all(~max(na.omit(.))) #taking maximum value
 attempt.3 <- clean.15 %>% group_by(Date, Station) %>% summarise_all(~mean(na.omit(.))) #taking mean of values
 attempt.4 <- clean.15 %>% group_by(Date, Station) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N", "Ortho.P", "Salinity", "Specific.Conductance","Temperature", "Depth")), ~median(na.exclude(.))) #taking median of values per recommendation to use median rather than averages for non-parametric data-sets
-#now assigning the groupings for depth 
+#now assigning the groupings for depth this grouping should be reassigned and done BEFORE taking the medians / averages if necessary to organize data by depth -- I did not end up using it in the model (treated every depth the same), but for some basic visualization of environmental parameters based on depth this might come in handy later.
 attempt.5 <- attempt.4 %>% mutate('Depth.Label' = case_when(Depth <= 0.3 ~ 'Surface',
                                                             Depth <= 1.0 ~ 'Sub-Surface',
                                                             Depth > 1.0 ~ 'Depth'))
@@ -239,7 +240,7 @@ count(combo.3, complete.cases(combo.3))
 combo.3 <- combo.3 %>% mutate(Year = as.numeric(format(Date,"%Y"))) 
 #correcting any double entries
 combo.3.1 <- combo.3 %>% group_by(Station, Group, Genus, Species, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-combo.3.2 <- combo.3 %>% group_by(Station, Group, Genus, Species, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+combo.3.2 <- combo.3 %>% group_by(Station, Group, Genus, Species, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 combo.3.3 <- dplyr::left_join(combo.3.1, combo.3.2, by = c("Station","Group","Genus","Species","Date"), keep = FALSE, na_matches = "never")
 
 #Starting point data frame with all phytoplankton to species level
@@ -249,14 +250,14 @@ phyto.by.species <- phyto.by.species %>% mutate(log.biovolume = log(Biovolume+1)
 
 #data frame with phytoplankton biovolume sorted by phylum
 phyto.by.phylum.0 <- combo.3.3 %>% group_by(Station,Group,Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-phyto.by.phylum.1 <- combo.3.3 %>% group_by(Station, Group, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+phyto.by.phylum.1 <- combo.3.3 %>% group_by(Station, Group, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 phyto.by.phylum <- dplyr::left_join(phyto.by.phylum.0, phyto.by.phylum.1, by = c("Station","Group","Date"), keep = FALSE, na_matches = "never")
 phyto.by.phylum  <- phyto.by.phylum  %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1, `CHLA` < 40 ~ 0) )
 phyto.by.phylum  <- phyto.by.phylum  %>% mutate(log.biovolume = log(Biovolume+1))
 
 #data frame with phytoplankton biovolume sorted by genus
 phyto.by.genus.0 <- combo.3.3 %>% group_by(Station,Group, Genus, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-phyto.by.genus.1 <- combo.3.3 %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+phyto.by.genus.1 <- combo.3.3 %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 phyto.by.genus <- dplyr::left_join(phyto.by.genus.0, phyto.by.genus.1, by = c("Station","Group","Date"), keep = FALSE, na_matches = "never")
 phyto.by.genus  <- phyto.by.genus  %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1, `CHLA` < 40 ~ 0) )
 phyto.by.genus  <- phyto.by.genus  %>% mutate(log.biovolume = log(Biovolume+1))
@@ -268,14 +269,14 @@ cyanos.by.species <- cyanos.by.species  %>% mutate(log.biovolume = log(Biovolume
 
 #data frame with only cyanobacteria by phylum 
 cyanos.by.phylum.0 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% group_by(Station,Group,Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-cyanos.by.phylum.1 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% group_by(Station, Group, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+cyanos.by.phylum.1 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% group_by(Station, Group, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 cyanos.by.phylum <- dplyr::left_join(cyanos.by.phylum.0, cyanos.by.phylum.1, by = c("Station","Group","Date"), keep = FALSE, na_matches = "never")
 cyanos.by.phylum  <- cyanos.by.phylum  %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1,`CHLA` < 40 ~ 0) )
 cyanos.by.phylum <- cyanos.by.phylum  %>% mutate(log.biovolume = log(Biovolume+1))
 
 #data frame with only cyanobacteria by genus
 cyanos.by.genus.0 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% group_by(Station,Group, Genus, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-cyanos.by.genus.1 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+cyanos.by.genus.1 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 cyanos.by.genus <- dplyr::left_join(cyanos.by.genus.0, cyanos.by.genus.1, by = c("Station","Group","Genus","Date"), keep = FALSE, na_matches = "never")
 cyanos.by.genus  <- cyanos.by.genus %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1, `CHLA` < 40 ~ 0) )
 cyanos.by.genus <- cyanos.by.genus %>% mutate(log.biovolume = log(Biovolume+1))
@@ -293,14 +294,14 @@ cyanos.by.N.Fix.2 <- cbind(cyanos.by.N.Fix.0, cyanos.by.N.Fix.1)
 cyanos.by.N.Fix.3 <- cyanos.by.N.Fix.2 %>% select(-N.Fixation) 
 cyanos.by.N.Fix.3 <- rename(cyanos.by.N.Fix.3, "N.Fixation" = "...22")
 cyanos.by.N.Fix.4 <- cyanos.by.N.Fix.3 %>% filter(N.Fixation == "N.fixer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-cyanos.by.N.Fix.5 <- cyanos.by.N.Fix.3 %>% filter(N.Fixation == "N.fixer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+cyanos.by.N.Fix.5 <- cyanos.by.N.Fix.3 %>% filter(N.Fixation == "N.fixer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 cyanos.by.N.Fix <- dplyr::left_join(cyanos.by.N.Fix.4, cyanos.by.N.Fix.5, by = c("Station","Group","Genus","Date"), keep = FALSE, na_matches = "never")
 cyanos.by.N.Fix <- cyanos.by.N.Fix %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1,`CHLA` < 40 ~ 0) )
 cyanos.by.N.Fix <- cyanos.by.N.Fix %>% mutate(log.biovolume = log(Biovolume+1))
 
 #Non.Fixers
 cyanos.by.Non.Fix.0 <- cyanos.by.N.Fix.3 %>% filter(N.Fixation == "Non.fixer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-cyanos.by.Non.Fix.1 <- cyanos.by.N.Fix.3 %>% filter(N.Fixation == "Non.fixer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+cyanos.by.Non.Fix.1 <- cyanos.by.N.Fix.3 %>% filter(N.Fixation == "Non.fixer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 cyanos.by.Non.Fix <- dplyr::left_join(cyanos.by.Non.Fix.0, cyanos.by.Non.Fix.1, by = c("Station","Group","Genus","Date"), keep = FALSE, na_matches = "never")
 cyanos.by.Non.Fix <- cyanos.by.Non.Fix %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1,  `CHLA` < 40 ~ 0) )
 cyanos.by.Non.Fix <- cyanos.by.Non.Fix %>% mutate(log.biovolume = log(Biovolume+1))
@@ -327,12 +328,12 @@ cyanos.by.MC.2 <- cbind(cyanos.by.MC.0, cyanos.by.MC.1)
 cyanos.by.MC.3 <- cyanos.by.MC.2 %>% select(-MC) 
 cyanos.by.MC.3 <- rename(cyanos.by.MC.3, "MC" = "...22")
 cyanos.by.MC.4 <- cyanos.by.MC.3 %>% filter(MC == "MC_producer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-cyanos.by.MC.5 <- cyanos.by.MC.3 %>% filter(MC == "MC_producer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+cyanos.by.MC.5 <- cyanos.by.MC.3 %>% filter(MC == "MC_producer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 cyanos.by.MC <- dplyr::left_join(cyanos.by.MC.4, cyanos.by.MC.5, by = c("Station","Group","Genus","Date"), keep = FALSE, na_matches = "never")
 cyanos.by.MC <- cyanos.by.MC %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1, `CHLA` < 40 ~ 0) )
 cyanos.by.MC <- cyanos.by.MC %>% mutate(log.biovolume = log(Biovolume+1))
 
-#Filamentous
+#Filamentous -- the list very similar to N fixers (at least in the Chowan) so not really worth it to investigate separately.
 filaments <- unique(cyanos.by.genus$Genus)
 cyanos.by.Filament.0 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% mutate(Filament = case_when(`Genus` == "Pseudanabaena" ~ "Filamentous", `Genus` == "Anabaena" ~ "Filamentous",
                                                                                                        `Genus` == "Raphidiopsis" ~ "Filamentous",
@@ -347,44 +348,40 @@ cyanos.by.Filament.2 <- cbind(cyanos.by.Filament.0, cyanos.by.Filament.1)
 cyanos.by.Filament.3 <- cyanos.by.Filament.2 %>% select(-Filament) 
 cyanos.by.Filament.3 <- rename(cyanos.by.Filament.3, "Filamentous" = "...22")
 cyanos.by.Filament.4 <- cyanos.by.Filament.3 %>% filter(Filamentous == "Filamentous") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
-cyanos.by.Filament.5 <- cyanos.by.Filament.3 %>% filter(Filamentous == "Filamentous") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
+cyanos.by.Filament.5 <- cyanos.by.Filament.3 %>% filter(Filamentous == "Filamentous") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 cyanos.by.Filament <- dplyr::left_join(cyanos.by.Filament.4, cyanos.by.Filament.5, by = c("Station","Group","Genus","Date"), keep = FALSE, na_matches = "never")
 cyanos.by.Filament <- cyanos.by.N.Fix %>% mutate(exceeded.CHLA.std = case_when(`CHLA` >= 40 ~ 1,`CHLA` < 40 ~ 0) )
 cyanos.by.Filament <- cyanos.by.N.Fix %>% mutate(log.biovolume = log(Biovolume+1))
 
+#now compiling only complete cases of each of these dfs organized by algae groups -- for now this is the best approach unless i choose to imputate. Discuss missing data with committee and Odum Institute consultants 
+complete.phytos.p <- phyto.by.phylum %>% drop_na()
+complete.phytos <- phyto.by.genus %>% drop_na()
+complete.phytos.s <- phyto.by.species %>% drop_na()
+complete.cyanos.p <- cyanos.by.phylum %>% drop_na()
+complete.cyanos <- cyanos.by.genus %>% drop_na()
+complete.cyanos.s <- cyanos.by.species %>% drop_na()
+complete.MC <- cyanos.by.MC %>% drop_na()
+complete.cyanos.N <- cyanos.by.N.Fix %>% drop_na()
+complete.cyanos.Non <- cyanos.by.Non.Fix %>% drop_na()
+
 # -------- APPLYING ACTUAL GAMS -------------------------------------------------------------------------------------- #
 # 9/28/2021 #
 #GAM SERIES 1 -- ADDRESSING Q3 and Q4 from original NCSG/APNEP proposal: How does Salinity and Nitrogen enrichment impact microcystin production?
-gam_MC.0 <- gam(log.biovolume ~ s(Ammonia, k=9) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = cyanos.by.MC)
-summary(gam_MC.0)
-gam.check(gam_MC.0)
-plot.gam(gam_MC.0, residuals = TRUE, shift = coef(gam_MC.0)[1], se = TRUE, shade = TRUE, pages=1) 
-#removing Kjeldahl N because association is due to cellular N, not anything causation related
-gam_MC.1 <- gam(log.biovolume ~ s(Ammonia, k=9) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = cyanos.by.MC)
-summary(gam_MC.1)
-gam.check(gam_MC.1)
-plot.gam(gam_MC.1, residuals = TRUE, shift = coef(gam_MC.1)[1], se = TRUE, shade = TRUE, pages=1) 
 #but how does Kjeldahl N look with all phytoplankton biovolume? 
-gam_all.1 <- gam(log.biovolume ~ s(Ammonia) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = phyto.by.genus)
-summary(gam_all.1)
-gam.check(gam_all.1)
-plot.gam(gam_all.1, residuals = TRUE, shift = coef(gam_all.1)[1], se = TRUE, shade = TRUE, pages=1) 
-#now only using complete cases -- stick with this for ALL models. Discuss missing data with committee and Odum people
-complete.MC <- cyanos.by.MC %>% drop_na()
-gam_MC.2 <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.MC)
+gam_MC.2 <- gam(log.biovolume ~ s(Ammonia, k=6) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.MC)
 summary(gam_MC.2)
 gam.check(gam_MC.2)
 plot.gam(gam_MC.2, residuals = TRUE, shift = coef(gam_MC.2)[1], se = TRUE, shade = TRUE, pages=1) 
 #without TKN
-gam_MC.3 <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.MC)
+gam_MC.3 <- gam(log.biovolume ~ s(Ammonia, k=5) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.MC)
 summary(gam_MC.3)
 gam.check(gam_MC.3)
 plot.gam(gam_MC.3, residuals = TRUE, shift = coef(gam_MC.3)[1], se = TRUE, shade = TRUE, pages=1) 
-#the phosphorus relationship changes markedly... examine the phosphorus and kjeldahl N relationship? for concurvity
-concurv <- concurvity(gam_MC.2, full = TRUE)
+#Testing concurvity amongst predictors
+concurv <- concurvity(gam_MC.2, full = FALSE)
 options(digits = 2, scientific = F)
 concurv
-write.csv(concurv, "/Users/haleyplaas/OneDrive - University of North Carolina at Chapel Hill/Coding/R/Chowan Data/multi-year/excel//concurvity.output.csv") # <- more reason to remove Kjedahl.N from all of the models
+write.csv(concurv, "/Users/haleyplaas/OneDrive - University of North Carolina at Chapel Hill/Coding/R/Chowan Data/multi-year/excel//concurvity.output.csv") # demonstrates that Ammonia and Inorganic N, as well as TP and TKN, are co-linear in the model
 gam_MC.P <- gam(log.biovolume ~ s(Phosphorus), method = "REML", data = complete.MC)
 summary(gam_MC.P)
 gam.check(gam_MC.P)
@@ -394,26 +391,21 @@ gam_MC.TKN <- gam(log.biovolume ~ s(Kjedahl.N), method = "REML", data = complete
 summary(gam_MC.TKN)
 gam.check(gam_MC.TKN)
 plot.gam(gam_MC.TKN, residuals = TRUE, shift = coef(gam_MC.TKN)[1], se = TRUE, shade = TRUE, pages=1) 
-#TP and TKN together
-gam_MC.both <- gam(log.biovolume ~ s(Kjedahl.N) + s(Phosphorus), method = "REML", data = complete.MC)
-summary(gam_MC.both)
-gam.check(gam_MC.both)
-plot.gam(gam_MC.both, residuals = TRUE, shift = coef(gam_MC.both)[1], se = TRUE, shade = TRUE, pages=1) 
 TKN.P.plot <- ggplot(complete.MC) + geom_point(aes(y=Kjedahl.N, x=Phosphorus))
-TKN.P.plot #more evidence of the clearly some interplay here between TKN and P measurements --> linear relationship between TKN and P, concurvity shows .999 relationship between the two -- extremely high relationship due to both methods quantifying the toxin within the cells 
-#but how does Kjeldahl N look with all cyanobacteria biovolume (complete cases only)? 
-complete.cyanos <- cyanos.by.genus %>% drop_na()
-gam_all.2 <- gam(log.biovolume ~ s(Ammonia) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos)
+TKN.P.plot #linear relationship between TKN and P, concurvity shows .999 relationship between the two -- extremely high relationship due to both methods quantifying the analyte bound within the cells 
+
+#All cyanobacteria biovolume as outcome variable
+gam_all.2 <- gam(log.biovolume ~ s(Ammonia, k = 9) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos)
 summary(gam_all.2)
 gam.check(gam_all.2)
 plot.gam(gam_all.2, residuals = TRUE, shift = coef(gam_all.2)[1], se = TRUE, shade = TRUE, pages=1) 
 #removing TKN again
-gam_all.3 <- gam(log.biovolume ~ s(Ammonia) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos)
+gam_all.3 <- gam(log.biovolume ~ s(Ammonia, k = 9) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos)
 summary(gam_all.3)
 gam.check(gam_all.3)
 plot.gam(gam_all.3, residuals = TRUE, shift = coef(gam_all.3)[1], se = TRUE, shade = TRUE, pages=1) 
-#but how does Kjeldahl N look with all phyto biovolume (complete cases only)? 
-complete.phytos <- phyto.by.genus %>% drop_na()
+
+#All phytoplankton biovolume as outcome variable
 gam_all.phytos.2 <- gam(log.biovolume ~ s(Ammonia) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.phytos)
 summary(gam_all.phytos.2)
 gam.check(gam_all.phytos.2)
@@ -426,104 +418,56 @@ plot.gam(gam_all.phytos.3, residuals = TRUE, shift = coef(gam_all.phytos.3)[1], 
 
 #Now moving onto playing with the cyano model with the nuts analytes and salinity predictors
 #by phylum
-complete.cyanos.p <- cyanos.by.phylum %>% drop_na()
-gam_cyanos.p <- gam(log.biovolume ~ s(Ammonia) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.p)
+gam_cyanos.p <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.p)
 summary(gam_cyanos.p)
 gam.check(gam_cyanos.p)
 plot.gam(gam_cyanos.p, residuals = TRUE, shift = coef(gam_cyanos.p)[1], se = TRUE, shade = TRUE, pages=1) 
 #by genus
-gam_all.3 <- gam(log.biovolume ~ s(Ammonia) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos)
+gam_all.3 <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos)
 summary(gam_all.3)
 gam.check(gam_all.3)
 plot.gam(gam_all.3, residuals = TRUE, shift = coef(gam_all.3)[1], se = TRUE, shade = TRUE, pages=1) 
-#by species
-complete.cyanos.s <- cyanos.by.species %>% drop_na()
-gam_cyanos.s <- gam(log.biovolume ~ s(Ammonia) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.s)
-summary(gam_cyanos.s)
-gam.check(gam_cyanos.s)
-plot.gam(gam_cyanos.s, residuals = TRUE, shift = coef(gam_cyanos.s)[1], se = TRUE, shade = TRUE, pages=1) 
 
 #ultimately --trends follow the same patterns between taxonomic groupings -- so stick with genus in order to compare to models grouping by microcystin producing and N fixing genera
 
-AICc(gam_cyanos.s, gam_cyanos.p, gam_all.3)
-#although when you compare the phylum vs genus vs species levels -- the phylum model is best
-
 #Looking at specific interaction between Inorganic N and the genus due to Inorganic N being the most important predictor of cyanobacterial biomass
-gam.within.g <- gam(log.biovolume ~ s(Ammonia) + s(Phosphorus) + s(Inorganic.N, by = Genus) + s(Salinity), method = "REML", data = complete.cyanos)
+gam.within.g <- gam(log.biovolume ~ s(Ammonia,k=8) + s(Phosphorus) + s(Inorganic.N, by = Genus) + s(Salinity), method = "REML", data = complete.cyanos)
 summary(gam.within.g)
 gam.check(gam.within.g)
 plot.gam(gam.within.g, residuals = TRUE, shift = coef(gam.within.g)[1], se = TRUE, shade = TRUE, pages=1) 
 
 #do these trends in associations hold up for N fixers? 
-complete.cyanos.N <- cyanos.by.N.Fix %>% drop_na()
 #with TKN
-gam_cyanos.N.1 <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.N)
+gam_cyanos.N.1 <- gam(log.biovolume ~ s(Ammonia, k=7) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.N)
 summary(gam_cyanos.N.1)
 gam.check(gam_cyanos.N.1)
 plot.gam(gam_cyanos.N.1, residuals = TRUE, shift = coef(gam_cyanos.N.1)[1], se = TRUE, shade = TRUE, pages=1) 
 
 #without TKN
-gam_cyanos.N.2 <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.N)
+gam_cyanos.N.2 <- gam(log.biovolume ~ s(Ammonia, k=7) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.N)
 summary(gam_cyanos.N.2)
 gam.check(gam_cyanos.N.2)
 plot.gam(gam_cyanos.N.2, residuals = TRUE, shift = coef(gam_cyanos.N.2)[1], se = TRUE, shade = TRUE, pages=1) 
 
 #do these trends in associations hold up for Non N fixers? 
-complete.cyanos.Non <- cyanos.by.Non.Fix %>% drop_na()
 #with TKN
-gam_cyanos.Non.1 <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.Non)
+gam_cyanos.Non.1 <- gam(log.biovolume ~ s(Ammonia, k=7) + s(Kjedahl.N) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.Non)
 summary(gam_cyanos.Non.1)
 gam.check(gam_cyanos.Non.1)
 plot.gam(gam_cyanos.Non.1, residuals = TRUE, shift = coef(gam_cyanos.Non.1)[1], se = TRUE, shade = TRUE, pages=1) 
 #without TKN
-gam_cyanos.Non.2 <- gam(log.biovolume ~ s(Ammonia, k=8) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.Non)
+gam_cyanos.Non.2 <- gam(log.biovolume ~ s(Ammonia, k=7) + s(Phosphorus) + s(Inorganic.N) + s(Salinity), method = "REML", data = complete.cyanos.Non)
 summary(gam_cyanos.Non.2)
 gam.check(gam_cyanos.Non.2)
 plot.gam(gam_cyanos.Non.2, residuals = TRUE, shift = coef(gam_cyanos.Non.2)[1], se = TRUE, shade = TRUE, pages=1) 
 
-# GAM series #2 Looking at ALL predictors (not just nutrient analytes and salinity) with all phyto plankton 
-#phosphorus
-#need to make sure that these are done with complete cases
-gam_phos <- gam(log.biovolume ~ s(Phosphorus), method = "REML", data = phyto.by.phylum)
-summary(gam_phos)
-plot.gam(gam_phos, residuals = TRUE, pch=1, cex=1, shift = coef(gam_phos)[1], se = TRUE, shade = TRUE) 
-#ammonia
-gam_amm <- gam(log.biovolume ~ s(Ammonia), method = "REML", data = phyto.by.phylum)
-summary(gam_amm)
-plot.gam(gam_amm, residuals = TRUE, pch=1, cex=1, shift = coef(gam_phos)[1], se = TRUE, shade = TRUE) #the ammonia data is super zero heavy
-#inorganic.N
-gam_N <- gam(log.biovolume ~ s(Inorganic.N), method = "REML", data = phyto.by.phylum)
-summary(gam_N)
-plot.gam(gam_N, residuals = TRUE, pch=1, cex=1, shift = coef(gam_phos)[1], se = TRUE, shade = TRUE)
-#turbidity
-gam_turb <- gam(log.biovolume ~ s(Turbidity), method = "REML", data = phyto.by.phylum)
-summary(gam_turb)
-plot.gam(gam_turb, residuals = TRUE, shift = coef(gam_turb)[1], se = TRUE, shade = TRUE, pages=1) 
-#all nuts
-gam_nuts <- gam(log.biovolume ~ s(Ammonia) + s(Phosphorus) + s(Inorganic.N) + s(Turbidity), method = "REML", data = phyto.by.phylum)
-summary(gam_nuts)
-plot.gam(gam_nuts, residuals = TRUE, pch=1, cex=1, shift = coef(gam_phos)[1], se = TRUE, shade = TRUE, pages=1) 
-plot.gam(gam_nuts, shift = coef(gam_phos)[1], se = TRUE, shade = TRUE, pages=1) 
-#chem GAM
-gam_chem <- gam(log.biovolume ~ s(pH) + s(Salinity, Station, bs = "fs") + s(DO), method = "REML", data = phyto.by.phylum)
-summary(gam_chem)
-plot.gam(gam_chem, shift = coef(gam_chem)[1], se = TRUE, shade = TRUE, pages=1) 
-#physical GAM
-gam_phys <- gam(log.biovolume ~ s(Flow.rate), method = "REML", data = phyto.by.phylum)
-summary(gam_phys)
-plot.gam(gam_phys, shift = coef(gam_phys)[1], se = TRUE, shade = TRUE, pages=1, xlim = c(0,10000)) 
-#CHLA
-gam_chla <- gam(log.biovolume ~ s(CHLA), method = "REML", data = phyto.by.phylum)
-summary(gam_chla)
-plot.gam(gam_chla, shift = coef(gam_chla)[1], se = TRUE, shade = TRUE, pages=1, xlim = c(0,150)) 
-
-#looking at individual factors with cyanobacterial biomass
-#making sure to use the complete.cyanos df
+# GAM series #2 Looking at ALL predictors individually (not just nutrient analytes and salinity) 
+#cyanobacterial biomass
 cgam_phos <- gam(log.biovolume ~ s(Phosphorus), method = "REML", data = complete.cyanos)
 summary(cgam_phos)
 plot(complete.cyanos$Phosphorus, complete.cyanos$log.biovolume)
 #AMMONIA
-cgam_amm <- gam(log.biovolume ~ s(Ammonia), method = "REML", data = complete.cyanos)
+cgam_amm <- gam(log.biovolume ~ s(Ammonia, k=9), method = "REML", data = complete.cyanos)
 summary(cgam_amm)
 plot(complete.cyanos$Ammonia, complete.cyanos$log.biovolume)
 #INORGANIC.N
@@ -534,10 +478,6 @@ plot(complete.cyanos$Inorganic.N, complete.cyanos$log.biovolume)
 cgam_Kjeldahl <- gam(log.biovolume ~ s(Kjedahl.N), method = "REML", data = complete.cyanos)
 summary(cgam_Kjeldahl)
 plot(complete.cyanos$Kjedahl.N, complete.cyanos$log.biovolume)
-#TURBIDITY
-cgam_turb <- gam(log.biovolume ~ s(Turbidity), method = "REML", data = complete.cyanos)
-summary(cgam_turb)
-plot(complete.cyanos$Turbidity, complete.cyanos$log.biovolume)
 #CHLA 
 cgam_chla <- gam(log.biovolume ~ s(CHLA), method = "REML", data = complete.cyanos)
 summary(cgam_chla)
@@ -565,7 +505,7 @@ cgam_temp <- gam(log.biovolume ~ s(Temperature), method = "REML", data = complet
 summary(cgam_temp)
 plot(complete.cyanos$Temperature, complete.cyanos$log.biovolume)
 #model selection
-AICc(cgam_amm, cgam_chla, cgam_DO, cgam_flow, cgam_Kjeldahl, cgam_N, cgam_pH, cgam_phos, cgam_salt, cgam_temp, cgam_turb)
+AICc(cgam_amm, cgam_chla, cgam_DO, cgam_flow, cgam_Kjeldahl, cgam_N, cgam_pH, cgam_phos, cgam_salt, cgam_temp)
 
 #looking at individual factors with microcystin producer biomass
 #making sure to use complete.MC
@@ -573,7 +513,7 @@ mcgam_phos <- gam(log.biovolume ~ s(Phosphorus), method = "REML", data = complet
 summary(mcgam_phos)
 plot(complete.MC$Phosphorus, complete.MC$log.biovolume)
 #AMMONIA
-mcgam_amm <- gam(log.biovolume ~ s(Ammonia, k = 9), method = "REML", data = complete.MC)
+mcgam_amm <- gam(log.biovolume ~ s(Ammonia, k = 6), method = "REML", data = complete.MC)
 summary(mcgam_amm)
 plot(complete.MC$Ammonia, complete.MC$log.biovolume, xlim = c(0,0.15)) #most ammonia values are <BLD... 
 #INORGANIC.N
@@ -585,10 +525,6 @@ mcgam_Kjeldahl <- gam(log.biovolume ~ s(Kjedahl.N), method = "REML", data = comp
 summary(mcgam_Kjeldahl)
 plot(complete.MC$Kjedahl.N, complete.MC$log.biovolume)
 plot.gam(mcgam_Kjeldahl, residuals = TRUE, shift = coef(mcgam_Kjeldahl)[1], se = TRUE, shade = TRUE, pages=1) 
-#TURBIDITY
-mcgam_turb <- gam(log.biovolume ~ s(Turbidity), method = "REML", data = complete.MC)
-summary(mcgam_turb)
-plot(complete.MC$Turbidity, complete.MC$log.biovolume)
 #CHLA 
 mcgam_chla <- gam(log.biovolume ~ s(CHLA), method = "REML", data = complete.MC)
 summary(mcgam_chla)
@@ -616,8 +552,9 @@ summary(mcgam_temp)
 plot(complete.MC$Temperature, complete.MC$log.biovolume)
 plot.gam(mcgam_temp, residuals = TRUE, shift = coef(mcgam_temp)[1], se = TRUE, shade = TRUE, pages=1) 
 #model selection
-AICc(mcgam_amm, mcgam_chla, mcgam_DO, mcgam_flow, mcgam_Kjeldahl, mcgam_N, mcgam_pH, mcgam_phos, mcgam_salt, mcgam_temp, mcgam_turb)
+AICc(mcgam_amm, mcgam_chla, mcgam_DO, mcgam_flow, mcgam_Kjeldahl, mcgam_N, mcgam_pH, mcgam_phos, mcgam_salt, mcgam_temp)
 
+# BELOW HERE HAS NOT BEEN EVALUATED FOR SEVERAL WEEKS AS OF 10-06-2021 # 
 # --- MORE COMPLEX GAMS, ADDING MORE THAN ONE PREDICTOR VARIABLE --- 
 # REMOVING TKN AND CHLA FROM ALL MODELS -- DUE TO CONCURVITIES TO EXAMINE WEAKER ASSOCIATIONS WITH OTHER PREDICTORS  -- NEED TO DO THIS
 #combined at the phylum level 
