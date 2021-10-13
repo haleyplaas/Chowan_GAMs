@@ -144,6 +144,26 @@ clean.12 <- clean.11 %>% select(Date, Identifier, Station, Depth, Parameter, Par
          Salinity, 
          Specific.Conductance = `Specific conductance`, 
          Temperature = `Temperature, water`)
+# Clean 12 is where I need to work on imputing data for the NDs and NAs: 
+# calculating the % of the data which is NA, ND, and actual value for each environmental parameter of interest
+
+##FOLLOWING IS FOR IMPUTATIONS##
+# Count NDs for each nutrient analyte 
+clean.ammonia <- clean.12 %>% group_by(Date, Station) %>% filter(Ammonia == "ND")
+amm.ND <- length(clean.ammonia$Ammonia)
+clean.NO3 <- clean.12 %>% group_by(Date, Station) %>% filter(Inorganic.N == "ND")
+NO3.ND <-length(clean.NO3$Inorganic.N)
+clean.TKN <- clean.12 %>% group_by(Date, Station) %>% filter(Kjedahl.N == "ND")
+TKN.ND <-length(clean.TKN$Kjedahl.N)
+clean.CHLA <- clean.12 %>% group_by(Date, Station) %>% filter(CHLA == "ND")
+CHLA.ND <-length(clean.CHLA$CHLA)
+clean.SALT <- clean.12 %>% group_by(Date, Station) %>% filter(Salinity == "ND")
+SALT.ND <-length(clean.SALT$Salinity)
+clean.TP <- clean.12 %>% group_by(Date, Station) %>% filter(Phosphorus == "ND")
+TP.ND <-length(clean.TP$Phosphorus)
+##PRIOR CODE IS FOR IMPUTATIONS##
+
+#merging all the lines which are overlapping by Date and Station
 #Skip clean.13 because at first I tried to select specific depths, but this filtered out too much important data, so I categorized the depths into surface, sub-surface, deep (bottom?), and will make note of this as a limitation when treating all the parameter values as if they were collected and quantified at the same depth, although the measurements could vary greatly due to depth of reading. 
 # see on 2021-10-06, all samples labeled "grab" were removed from the model
 
@@ -184,11 +204,45 @@ clean.15 <- clean.15 %>% filter(Depth < 200) #remove the outlier Depth of 200 (t
 attempt.1 <- clean.15 %>% group_by(Date, Station) %>% summarise_all(~first(na.omit(.))) #row with first mention of value
 attempt.2 <- clean.15 %>% group_by(Date, Station) %>% summarise_all(~max(na.omit(.))) #taking maximum value
 attempt.3 <- clean.15 %>% group_by(Date, Station) %>% summarise_all(~mean(na.omit(.))) #taking mean of values
-attempt.4 <- clean.15 %>% group_by(Date, Station) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH", "Turbidity", "CHLA", "DO", "Inorganic.N", "Kjedahl.N", "Ortho.P", "Salinity", "Specific.Conductance","Temperature", "Depth")), ~median(na.exclude(.))) #taking median of values per recommendation to use median rather than averages for non-parametric data-sets
+attempt.4 <- clean.15 %>% group_by(Date, Station) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH","CHLA", "DO", "Inorganic.N", "Kjedahl.N", "Ortho.P", "Salinity", "Specific.Conductance","Temperature", "Depth")), ~median(na.omit(.))) #taking median of values per recommendation to use median rather than averages for non-parametric data-sets
 #now assigning the groupings for depth this grouping should be reassigned and done BEFORE taking the medians / averages if necessary to organize data by depth -- I did not end up using it in the model (treated every depth the same), but for some basic visualization of environmental parameters based on depth this might come in handy later.
+
+##FOLLOWING IS FOR IMPUTATIONS##
+# Count NDs for each nutrient analyte 
+clean.ammonia <- attempt.4 %>% group_by(Date, Station) %>% filter(is.na(Ammonia))
+amm.NA <- length(clean.ammonia$Ammonia)
+clean.NO3 <- attempt.4 %>% group_by(Date, Station) %>% filter(is.na(Inorganic.N))
+NO3.NA <- length(clean.NO3$Inorganic.N)
+clean.TKN <- attempt.4 %>% group_by(Date, Station) %>% filter(is.na(Kjedahl.N))
+TKN.NA <- length(clean.TKN$Kjedahl.N)
+clean.CHLA <- attempt.4 %>% group_by(Date, Station) %>% filter(is.na(CHLA))
+CHLA.NA <- length(clean.CHLA$CHLA)
+clean.SALT <- attempt.4 %>% group_by(Date, Station) %>% filter(is.na(Salinity))
+SALT.NA <- length(clean.SALT$Salinity)
+clean.TP <- attempt.4 %>% group_by(Date, Station) %>% filter(is.na(Phosphorus)) 
+TP.NA <- length(clean.TP$Phosphorus)
+
+#MISSING DATA %
+missing.amm <- (amm.ND + amm.NA)/3111*100
+missing.NO3 <- (NO3.ND + NO3.NA)/3111*100
+missing.TKN <- (TKN.ND + TKN.NA)/3111*100
+missing.CHLA <- (CHLA.ND + CHLA.NA)/3111*100
+missing.SALT <- (SALT.ND + SALT.NA)/3111*100
+missing.TP <- (TP.ND + TP.NA)/3111*100
+##PRIOR CODE IS FOR IMPUTATIONS##
+
 attempt.5 <- attempt.4 %>% mutate('Depth.Label' = case_when(Depth <= 0.3 ~ 'Surface',
                                                             Depth <= 1.0 ~ 'Sub-Surface',
                                                             Depth > 1.0 ~ 'Depth'))
+
+##IMPUTATION 1: SALINITY BASED ON STATION AVERAGE PER YEAR##
+for.imputations <- attempt.5 %>% mutate(Year = as.numeric(format(Date,"%Y"))) 
+Salt_imputations <- for.imputations %>% select(Station, Year, Salinity) %>% group_by(Station, Year) %>% summarise_all(~first(na.omit(.))) 
+ggplot(Salt_imputations) + geom_point(aes(x=Station, y=Salinity))
+install.packages("mlmi")
+library(mlmi)
+??mlmi
+
 #-----------------------------------------------------------------------------------------------
 #Adding in additional environmental parameters of interest (the Flow Rates per date (USGS) and also the main phytoplankton groups (NC-DEQ)). 
 # ADDING THE PHYTO GROUPS -- only from 1999 and beyond
@@ -223,7 +277,6 @@ CR.AS.2 <- CR.AS %>% mutate(Station = as.factor(Station),
 #selecting the 10 stations of interest (which overlap between availability of phytoplankton data and WQP data)
 CR.AS.3 <- CR.AS.2 %>% filter(Station == "D6250000" | Station == "D8356200" | Station == "D8950000" | Station == "D9490000" | Station == "D999500C" | Station == "D999500N" | Station == "D999500S" | Station == "M390000C" | Station == "M610000C" | Station == "N9700000") 
 
-#this is where the current problem is happening
 #merging CR.AS phyto data and physical water quality data based on the date and station 
 combo <- dplyr::left_join(CR.AS.3, attempt.5, by = c("Date","Station"), keep = FALSE) 
 
@@ -326,7 +379,7 @@ cyanos.by.MC.0 <- combo.3.3 %>% filter(Group == "Cyanobacteria") %>% mutate(MC =
 cyanos.by.MC.1 <- cyanos.by.MC.0$MC %>% replace_na("Non.MC")
 cyanos.by.MC.2 <- cbind(cyanos.by.MC.0, cyanos.by.MC.1)
 cyanos.by.MC.3 <- cyanos.by.MC.2 %>% select(-MC) 
-cyanos.by.MC.3 <- rename(cyanos.by.MC.3, "MC" = "...22")
+cyanos.by.MC.3 <- rename(cyanos.by.MC.3, "MC" = "...21")
 cyanos.by.MC.4 <- cyanos.by.MC.3 %>% filter(MC == "MC_producer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Biovolume")), ~sum(na.exclude(.)))
 cyanos.by.MC.5 <- cyanos.by.MC.3 %>% filter(MC == "MC_producer") %>% group_by(Station, Group, Genus, Date) %>% summarise_at(vars(c("Phosphorus","Ammonia", "pH",  "CHLA", "DO", "Inorganic.N", "Kjedahl.N","Salinity", "Specific.Conductance","Temperature", "Depth","Flow.rate", "Year")), ~first(na.exclude(.)))
 cyanos.by.MC <- dplyr::left_join(cyanos.by.MC.4, cyanos.by.MC.5, by = c("Station","Group","Genus","Date"), keep = FALSE, na_matches = "never")
